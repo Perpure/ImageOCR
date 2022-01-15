@@ -4,3 +4,6 @@ torch
 torchvision
 shapely
 pyclipper
+torchserve
+torch-model-archiver
+torch-workflow-archiver
