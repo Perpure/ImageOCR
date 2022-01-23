@@ -1,0 +1,24 @@
+text_detection:
+  recognition_url: 'http://localhost:8786/predictions/TextRecognition'
+  min_side_len: 1216
+  bitmap_thresh: 0.5
+  box_thresh: 0.4
+  max_candidates: 1000
+  unclip_ratio: 1.8
+  use_dilation: True
+  min_box_size: 3
+  sorting_tight_scale: 0.1
+
+text_recognition:
+  prefer_more_spaces: True
+  use_beam_search: True
+  cyr_dict: 'cyrillic_dict.txt'
+  cyr_dict_to_rus: 'cyrillic_dict_to_rus.txt'
+  ctc_decoder: # https://github.com/parlance/ctcdecode
+    lm_model: None # Absolute path to lm model
+    alpha: 0.2
+    beta: 1.5
+    cutoff_top_n: 100
+    cutoff_prob: 1
+    beam_width: 100
+    num_processes: 4

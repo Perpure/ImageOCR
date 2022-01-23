@@ -5,28 +5,27 @@ from PIL import Image
 from ts.torch_handler.base_handler import BaseHandler
 import torch
 import json
+import yaml
 import cv2
 import numpy as np
 from det_postprocess import DBPostProcess
 import requests
 from det_sort_boxes import sort_boxes
 
+
 class DetHandler(BaseHandler):
-    
+
     def __init__(self):
-        self.get_boxes = DBPostProcess()
-        self.rec_url = 'http://localhost:8786/predictions/TextRecognition'
-        self.workdir = '/path/to/your/workdir' # used for debug
+        with open('config.yaml') as f:
+            config = yaml.safe_load(f)['text_detection']
+        self.get_boxes = DBPostProcess(config)
+        self.rec_url = config['recognition_url']
+        self.min_side_len = config['min_side_len']
+        self.workdir = '/path/to/your/workdir'  # for debug
+        self.sorting_tight_scale = config['sorting_tight_scale']
         super().__init__()
 
     def preprocess(self, data):
-        """
-        Preprocess function to convert the request input to a tensor(Torchserve supported format).
-        Args :
-            data (list): List of the data from the request input.
-        Returns:
-            tensor: Returns the tensor data of the input
-        """
         file = data[0]['file']
         inp = np.asarray(bytearray(file), dtype=np.uint8)
         img = cv2.imdecode(inp, cv2.IMREAD_COLOR)
@@ -57,13 +56,13 @@ class DetHandler(BaseHandler):
         shape_list = [[self.ori_h, self.ori_w, self.ratio_h, self.ratio_w]]
 
         data = data.cpu().numpy()
-        # self.draw_mask(data)
+        self.draw_mask(data)
 
         boxes = self.get_boxes(data, shape_list)[0]['points'].astype(np.float32)
         boxes = self.filter_tag_det_res_only_clip(boxes, (self.ori_h, self.ori_w))
 
         boxes = self.pre_sort_boxes(boxes)
-        boxes = sort_boxes(boxes)
+        boxes = sort_boxes(boxes, self.sorting_tight_scale)
 
         response = []
         for i in range(len(boxes)):
@@ -93,9 +92,14 @@ class DetHandler(BaseHandler):
     def order_points_clockwise(self, pts):
         xSorted = pts[np.argsort(pts[:, 0]), :]
 
+        # grab the left-most and right-most points from the sorted
+        # x-roodinate points
         leftMost = xSorted[:2, :]
         rightMost = xSorted[2:, :]
 
+        # now, sort the left-most coordinates according to their
+        # y-coordinates so we can grab the top-left and bottom-left
+        # points, respectively
         leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
         (tl, bl) = leftMost
 
@@ -143,29 +147,16 @@ class DetHandler(BaseHandler):
             img, (ratio_h, ratio_w)
         """
 
-        # TODO: move to config
-        limit_side_len = 1216
-        limit_type = 'min'
-
         h, w, _ = img.shape
 
-        # limit the max side
-        if limit_type == 'max':
-            if max(h, w) > limit_side_len:
-                if h > w:
-                    ratio = float(limit_side_len) / h
-                else:
-                    ratio = float(limit_side_len) / w
+        if min(h, w) < self.min_side_len:
+            if h < w:
+                ratio = float(self.min_side_len) / h
             else:
-                ratio = 1.
+                ratio = float(self.min_side_len) / w
         else:
-            if min(h, w) < limit_side_len:
-                if h < w:
-                    ratio = float(limit_side_len) / h
-                else:
-                    ratio = float(limit_side_len) / w
-            else:
-                ratio = 1.
+            ratio = 1.
+
         resize_h = int(h * ratio)
         resize_w = int(w * ratio)
 
@@ -179,18 +170,9 @@ class DetHandler(BaseHandler):
         ratio_h = resize_h / float(h)
         ratio_w = resize_w / float(w)
         return img, [ratio_h, ratio_w]
-    
+
     def get_rotate_crop_image(self, img, points):
-        '''
-        img_height, img_width = img.shape[0:2]
-        left = int(np.min(points[:, 0]))
-        right = int(np.max(points[:, 0]))
-        top = int(np.min(points[:, 1]))
-        bottom = int(np.max(points[:, 1]))
-        img_crop = img[top:bottom, left:right, :].copy()
-        points[:, 0] = points[:, 0] - left
-        points[:, 1] = points[:, 1] - top
-        '''
+
         img_crop_width = int(
             max(
                 np.linalg.norm(points[0] - points[1]),
@@ -212,7 +194,6 @@ class DetHandler(BaseHandler):
         if dst_img_height * 1.0 / dst_img_width >= 1.5:
             dst_img = np.rot90(dst_img)
         return dst_img
-
 
     def pre_sort_boxes(self, dt_boxes):
         return sorted(dt_boxes, key=lambda x: (x[0][1], x[0][0]))

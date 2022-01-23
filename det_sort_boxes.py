@@ -24,9 +24,10 @@ def calc_perpendicular(a, b, c):
     return abs(np.cross(c - a, b - a)) / np.linalg.norm(b - a)
 
 class BoxCluster:
-    def __init__(self, box):
+    def __init__(self, box, tight_scale):
         self.boxes = np.expand_dims(box, axis=0)
-        self.dist_threshold = np.linalg.norm(box[0] - box[-1]) * 2
+        self.tight_scale = tight_scale
+        self.dist_threshold = np.linalg.norm(box[0] - box[-1]) * 1.5
 
         # Создается новая система координат
         # Точка отсчета - левая верхняя точка прямоугольника box[0]
@@ -43,6 +44,7 @@ class BoxCluster:
         new_box = self.transform_box(box)
         self.bound_x = new_box[1][0]
         self.bound_y = new_box[3][1]
+
 
     def transform_dot(self, dot):
         return np.matmul(self.rot_matrix, dot + self.bias)
@@ -139,7 +141,6 @@ class BoxCluster:
         return False
 
     def get_sorted_boxes(self):
-        tight_scale = 0.1
 
         transform_with_source = lambda box: (self.transform_box(box), box)
         box_pairs = list(map(transform_with_source, self.boxes))
@@ -149,20 +150,20 @@ class BoxCluster:
         start_box_pair = boxes_sorted_by_y[0]
         row = [start_box_pair[1]]
         y_min, y_max = start_box_pair[0][:,1].min(), start_box_pair[0][:,1].max()
-        row_y_low_boundary = y_max - tight_scale * (y_max - y_min)
+        row_y_low_boundary = y_max - self.tight_scale * (y_max - y_min)
         for box_pair in boxes_sorted_by_y[1:]:
             if box_pair[0][:,1].min() > row_y_low_boundary:
                 sorted_boxes += sorted(row, key=lambda box: box[0][0])
                 row = [box_pair[1]]
                 y_min, y_max = box_pair[0][:,1].min(), box_pair[0][:,1].max()
-                row_y_low_boundary = y_max - tight_scale * (y_max - y_min)
+                row_y_low_boundary = y_max - self.tight_scale * (y_max - y_min)
             else:
                 row.append(box_pair[1])
 
         sorted_boxes += sorted(row, key=lambda box: box[0][0])
         return sorted_boxes
 
-def cluster_boxes(dt_boxes):
+def cluster_boxes(dt_boxes, tight_scale):
     clusters = []
     for box in dt_boxes:
         is_added = False
@@ -171,7 +172,7 @@ def cluster_boxes(dt_boxes):
                 is_added = True
                 break
         if not is_added:
-            clusters.append(BoxCluster(box))
+            clusters.append(BoxCluster(box, tight_scale))
 
     prev_size = -1
 
@@ -190,8 +191,8 @@ def cluster_boxes(dt_boxes):
 
     return sorted(clusters, key=lambda cluster: -cluster.bias[1])
 
-def sort_boxes(dt_boxes):
-    clusters = cluster_boxes(dt_boxes)
+def sort_boxes(dt_boxes, tight_scale):
+    clusters = cluster_boxes(dt_boxes, tight_scale)
     ans = []
     for cluster in clusters:
         ans += cluster.get_sorted_boxes()

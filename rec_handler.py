@@ -4,30 +4,20 @@ import io
 import cv2
 import numpy as np
 import math
+import yaml
 from rec_postprocess import CTCLabelDecode
 
 
 class RecHandler(BaseHandler):
-    
+
     def __init__(self):
         self.rec_image_shape = (3, 32, 320)
-
-        # TODO: Move to config
-        cyr_dict = 'cyrillic_dict.txt'
-        cyr_dict_to_rus = 'cyrillic_dict_to_rus.txt'
-        lm_model = '/absolute/path/to/soc_arpa.binary'
-        self.decode = CTCLabelDecode(cyr_dict, cyr_dict_to_rus, lm_model)
+        with open('config.yaml') as f:
+            config = yaml.safe_load(f)['text_recognition']
+        self.decode = CTCLabelDecode(config)
         super().__init__()
 
     def preprocess(self, data):
-        """
-        Preprocess function to convert the request input to a tensor(Torchserve supported format).
-        The user needs to override to customize the pre-processing
-        Args :
-            data (list): List of the data from the request input.
-        Returns:
-            tensor: Returns the tensor data of the input
-        """
         file = data[0]['file']
         inp = np.asarray(bytearray(file), dtype=np.uint8)
         img = cv2.imdecode(inp, cv2.IMREAD_COLOR)
@@ -36,14 +26,6 @@ class RecHandler(BaseHandler):
         return torch.as_tensor(img, device=self.device)
 
     def postprocess(self, data):
-        """
-        The post process function makes use of the output from the inference and converts into a
-        Torchserve supported response output.
-        Args:
-            data (Torch Tensor): The torch tensor received from the prediction output of the model.
-        Returns:
-            List: The post process function returns a list of the predicted output.
-        """
         return [self.decode(data.cpu())]
 
     def resize_norm_img(self, img):

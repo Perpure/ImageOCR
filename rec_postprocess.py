@@ -2,18 +2,15 @@ import numpy as np
 import string
 import torch
 from ctcdecode import CTCBeamDecoder
-
+import re
 
 class CTCLabelDecode(object):
-    def __init__(self, character_dict_path, new_character_dict_path, lm_model_path=None):
-
+    def __init__(self, config):
         self.character_str = ''
-        self.character_dict_path = character_dict_path
-        self.new_character_dict_path = new_character_dict_path
-        with open(character_dict_path, "rb") as fin:
+        with open(config['cyr_dict'], 'rb') as fin:
             lines = fin.readlines()
             for line in lines:
-                line = line.decode('utf-8').strip("\n").strip("\r\n")
+                line = line.decode('utf-8').strip('\n').strip('\r\n')
                 self.character_str += line
         self.character_str += ' '
         dict_character = ['_'] + list(self.character_str)
@@ -23,26 +20,39 @@ class CTCLabelDecode(object):
             self.dict[char] = i
         self.character = dict_character
 
-        self.character_new, self.mapper_to_new = self.make_new_dict()
+        self.character_new, self.mapper_to_new = self.make_new_dict(config['cyr_dict_to_rus'])
 
-        self.decoder = CTCBeamDecoder(
-            self.character_new,
-            model_path=lm_model_path,
-            alpha=0.2,
-            beta=1.5,
-            cutoff_top_n=100,
-            cutoff_prob=1,
-            beam_width=100,
-            num_processes=4,
-            blank_id=0,
-            log_probs_input=False
-        )
+        if config['prefer_more_spaces']:
+            self.pick_best_pred = lambda pred1, pred2: pred2 if (pred2 == 1).sum() > (pred1 == 1).sum() else pred1
+        else:
+            self.pick_best_pred = lambda pred1, pred2: pred1
 
-    def make_new_dict(self):
-        with open(self.new_character_dict_path, 'rb') as f:
+        if config['use_beam_search']:
+            ctc_config = config['ctc_decoder']
+            self.decoder = CTCBeamDecoder(
+                self.character_new,
+                model_path=ctc_config['lm_model'],
+                alpha=ctc_config['alpha'],
+                beta=ctc_config['beta'],
+                cutoff_top_n=ctc_config['cutoff_top_n'],
+                cutoff_prob=ctc_config['cutoff_prob'],
+                beam_width=ctc_config['beam_width'],
+                num_processes=ctc_config['num_processes'],
+                blank_id=0,
+                log_probs_input=False
+            )
+
+            self.decode = lambda preds: self.decode_beam_search(preds)
+        else:
+            self.decode = lambda preds: self.decode_greedy(preds)
+
+        self.rm_dup_spaces = re.compile('\s+')
+
+    def make_new_dict(self, new_character_dict_path):
+        with open(new_character_dict_path, 'rb') as f:
             lines = f.readlines()
             assert len(lines) + 3 == len(self.character)  # 2 spaces and blank
-            lines = list(map(lambda x: x.decode('utf-8').strip("\n").strip("\r\n"), lines))
+            lines = list(map(lambda x: x.decode('utf-8').strip('\n').strip('\r\n'), lines))
             lines = ['  '] + lines + ['  ']  # to self.character format
             character_new = ['_'] + sorted(list(set(map(lambda x: x[1], lines))))
 
@@ -62,7 +72,7 @@ class CTCLabelDecode(object):
         preds_new = np.apply_along_axis(self.adapt_row_to_new_dict, 2, preds)
         return preds_new
 
-    def CTC_decode(self, preds):
+    def decode_beam_search(self, preds):
         beam_results, beam_scores, timesteps, out_len = self.decoder.decode(torch.from_numpy(preds))
 
         texts = []
@@ -70,15 +80,10 @@ class CTCLabelDecode(object):
 
             pred1 = beam_results[j][0][:out_len[j][0]]
             pred2 = beam_results[j][1][:out_len[j][1]]
-            # top_predict = pred1
-            # counting spaces
-            if (pred2 == 1).sum() > (pred1 == 1).sum():
-                top_predict = pred2
-            else:
-                top_predict = pred1
-            text = ''.join(list(map(lambda x: self.character_new[int(x)], top_predict)))
+            top_predict = self.pick_best_pred(pred1, pred2)
 
-            texts.append(text.strip().replace('  ', ' '))
+            text = ''.join(list(map(lambda x: self.character_new[int(x)], top_predict)))
+            texts.append(self.rm_dup_spaces.sub(' ', text.strip()))
 
         return texts
 
@@ -86,8 +91,7 @@ class CTCLabelDecode(object):
         if isinstance(preds, torch.Tensor):
             preds = preds.numpy()
         preds = self.adapt_to_new_dict(preds)
-        texts = self.CTC_decode(preds)
-        # texts = self.decode_greedy(preds)
+        texts = self.decode(preds)
         return texts
 
     def decode_greedy(self, preds, text_prob=None, is_remove_duplicate=False):

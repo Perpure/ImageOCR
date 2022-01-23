@@ -10,32 +10,20 @@ import pyclipper
 
 
 class DBPostProcess(object):
-    """
-    The post process for Differentiable Binarization (DB).
-    """
-
-    def __init__(self,
-                 thresh=0.5,
-                 box_thresh=0.4,
-                 max_candidates=1000,
-                 unclip_ratio=1.8,
-                 use_dilation=True,
-                 **kwargs):
-        self.thresh = thresh
-        self.box_thresh = box_thresh
-        self.max_candidates = max_candidates
-        self.unclip_ratio = unclip_ratio
-        self.min_size = 3
-        self.dilation_kernel = None if not use_dilation else np.array(
+    def __init__(self, config):
+        self.thresh = config['bitmap_thresh']
+        self.box_thresh = config['box_thresh']
+        self.max_candidates = config['max_candidates']
+        self.unclip_ratio = config['unclip_ratio']
+        self.min_size = config['min_box_size']
+        self.dilation_kernel = None if not config['use_dilation'] else np.array(
             [[1, 1], [1, 1]])
-
 
     def boxes_from_bitmap(self, pred, _bitmap, dest_width, dest_height):
         '''
         _bitmap: single map with shape (1, H, W),
                 whose values are binarized as {0, 1}
         '''
-
         bitmap = _bitmap
         height, width = bitmap.shape
 
@@ -61,6 +49,7 @@ class DBPostProcess(object):
 
             box = self.unclip(points).reshape(-1, 1, 2)
             box, sside = self.get_mini_boxes(box)
+
             if sside < self.min_size + 2:
                 continue
             box = np.array(box)
@@ -92,6 +81,7 @@ class DBPostProcess(object):
         else:
             index_1 = 1
             index_4 = 0
+
         if points[3][1] > points[2][1]:
             index_2 = 2
             index_3 = 3
